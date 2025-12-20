@@ -44,7 +44,7 @@ def analyze_email_with_memory(email_text, _client_key):
     response = client.models.generate_content(
         model='gemini-2.0-flash-exp', contents=prompt
     )
-return response.text
+    return response.text
 
 # --- HELPER: TO EXTRACT TEXT FROM PDF ---
 def extract_text_from_pdf(uploaded_file):
