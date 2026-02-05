@@ -1,6 +1,6 @@
 import streamlit as st
 import fitz  # PyMuPDF
-import google.generativeai as genai # <--- CHANGED LIBRARY
+import google.generativeai as genai
 import json
 import pandas as pd
 from datetime import datetime
@@ -23,8 +23,21 @@ with st.sidebar:
     
     current_user = st.text_input("Your Name (for the log)", value="Analyst")
     
+    # --- DIAGNOSTIC TOOL: LIST MODELS ---
     if api_key:
-        st.success("Key connected! ✅")
+        try:
+            genai.configure(api_key=api_key)
+            st.success("System Connected! ✅")
+            
+            # Show available models in an expander so we can debug if needed
+            with st.expander("Show Available Models"):
+                try:
+                    models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                    st.write(models)
+                except:
+                    st.write("Could not list models.")
+        except Exception as e:
+            st.error(f"Connection failed: {e}")
 
 # --- FUNCTION: LOGGING TO CSV ---
 def save_to_history(filename, user, result_data):
@@ -48,15 +61,10 @@ def save_to_history(filename, user, result_data):
         st.error(f"Could not save log: {e}")
         return False
 
-# --- FUNCTION: AI ANALYSIS (STABLE VERSION) ---
+# --- FUNCTION: AI ANALYSIS (SELF-HEALING) ---
 @st.cache_data(show_spinner=False)
 def analyze_email_with_memory(email_text, _client_key):
-    # 1. Configure the STABLE library
     genai.configure(api_key=_client_key)
-    
-    # 2. Initialize the Model
-    # We use 'gemini-1.5-flash' which works reliably in this SDK
-    model = genai.GenerativeModel('gemini-1.5-flash')
     
     prompt = f"""
     Act as a senior email analyst. Analyze the provided email thread.
@@ -79,12 +87,31 @@ def analyze_email_with_memory(email_text, _client_key):
     }}
     """
     
-    # 3. Generate Content
-    response = model.generate_content(
-        prompt,
-        generation_config={"response_mime_type": "application/json"}
-    )
-    return response.text
+    # --- SMART MODEL SELECTOR ---
+    # We try 3 models in order. If one fails, we catch the error and try the next.
+    model_options = [
+        'gemini-1.5-flash',       # First choice (Fastest)
+        'gemini-1.5-flash-001',   # Second choice (Pinned version)
+        'gemini-1.5-flash-002',   # Third choice (Newest)
+        'gemini-pro'              # Fallback (Old reliable)
+    ]
+    
+    last_error = None
+    
+    for model_name in model_options:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(
+                prompt,
+                generation_config={"response_mime_type": "application/json"}
+            )
+            return response.text # If successful, return immediately
+        except Exception as e:
+            last_error = e
+            continue # Try the next model in the list
+            
+    # If we run out of models, raise the last error
+    raise last_error
 
 # --- FUNCTION: READ PDF ---
 def extract_text_from_pdf(uploaded_file):
@@ -122,7 +149,6 @@ with tab1:
                     # 3. Display Results
                     st.divider()
                     
-                    # Color-coded Alert Box
                     cat = data.get('category', 'BLUE').upper()
                     if "RED" in cat:
                         st.error(f"### 🔥 BURNING (RED)\n**Reason:** {data.get('reason')}")
@@ -131,7 +157,6 @@ with tab1:
                     else:
                         st.info(f"### 🧊 COLD (BLUE)\n**Reason:** {data.get('reason')}")
 
-                    # Columns for layout
                     col1, col2 = st.columns([1, 2])
                     
                     with col1:
@@ -144,23 +169,16 @@ with tab1:
                         st.text_area("Copy this reply:", value=email_draft, height=300)
 
                 except Exception as e:
-                    st.error(f"Something went wrong: {e}")
+                    st.error(f"All models failed. Last error: {e}")
 
 # === TAB 2: THE HISTORY LOG ===
 with tab2:
     st.header("🗂️ Analysis History")
-    
     if os.path.exists("history.csv"):
         df = pd.read_csv("history.csv")
-        df = df.iloc[::-1] # Reverse order
+        df = df.iloc[::-1]
         st.dataframe(df, use_container_width=True)
-        
         csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Log as CSV",
-            data=csv,
-            file_name='heatmap_history.csv',
-            mime='text/csv',
-        )
+        st.download_button(label="📥 Download CSV", data=csv, file_name='heatmap_history.csv', mime='text/csv')
     else:
-        st.info("No history found yet. Run an analysis in the first tab!")
+        st.info("No history found yet.")
