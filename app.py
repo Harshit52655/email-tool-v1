@@ -42,7 +42,7 @@ def analyze_email_with_memory(email_text, _client_key):
     
     # I switched this to the stable model to avoid 404 errors
     response = client.models.generate_content(
-        model='gemini-1.5-flash', contents=prompt
+        model='gemini-2.0-flash', contents=prompt
     )
     
     return response.text  # <--- FIXED: Now indented correctly!
