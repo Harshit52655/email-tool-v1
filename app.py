@@ -9,8 +9,8 @@ import os
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Email Heatmap", page_icon="🔥", layout="wide")
 
-# --- HARDCODED API KEY (For testing only) ---
-# ⚠️ WARNING: Remove this before sharing publicly!
+# --- API KEY (Incorporated) ---
+# ⚠️ SECURITY WARNING: Remove this before making the repo public!
 DEFAULT_API_KEY = "AIzaSyCeevMmHPXwScyRlztI4lrqxHq2fkCokk4"
 
 # --- UI HEADER ---
@@ -20,24 +20,18 @@ st.title("📧 Email Heatmap & Actionizer")
 with st.sidebar:
     st.header("⚙️ Settings")
     
-    # We use the hardcoded key by default, but allow overriding it
+    # Allow overriding the key if needed
     api_key_input = st.text_input("Gemini API Key", type="password", value=DEFAULT_API_KEY)
-    
-    # Use the input if provided, otherwise fallback to the constant
     api_key = api_key_input if api_key_input else DEFAULT_API_KEY
     
     current_user = st.text_input("Your Name (for the log)", value="Analyst")
     
     if api_key:
         st.success("Key connected! ✅")
-    else:
-        st.warning("⚠️ No API Key found")
 
 # --- FUNCTION: LOGGING TO CSV ---
 def save_to_history(filename, user, result_data):
     """Saves the analysis result to a local CSV file."""
-    
-    # 1. Prepare the data row
     new_record = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "User": user,
@@ -47,13 +41,9 @@ def save_to_history(filename, user, result_data):
         "Draft Subject": result_data.get('draft_subject', 'N/A')
     }
     
-    # 2. Define file path
     log_file = "history.csv"
-    
-    # 3. Check if file exists (to decide whether to write headers)
     file_exists = os.path.isfile(log_file)
     
-    # 4. Append to CSV
     try:
         df = pd.DataFrame([new_record])
         df.to_csv(log_file, mode='a', header=not file_exists, index=False)
@@ -65,7 +55,6 @@ def save_to_history(filename, user, result_data):
 # --- FUNCTION: AI ANALYSIS ---
 @st.cache_data(show_spinner=False)
 def analyze_email_with_memory(email_text, _client_key):
-    # Initialize the client with the key
     client = genai.Client(api_key=_client_key)
     
     prompt = f"""
@@ -89,13 +78,25 @@ def analyze_email_with_memory(email_text, _client_key):
     }}
     """
     
-    # UPDATED MODEL NAME to the stable version
-    response = client.models.generate_content(
-        model='gemini-1.5-flash', 
-        contents=prompt,
-        config={'response_mime_type': 'application/json'}
-    )
-    return response.text
+    # --- MODEL FIX ---
+    # We use 'gemini-1.5-flash-001' which is the PINNED STABLE version.
+    # This resolves the 404 error caused by alias mismatch.
+    try:
+        response = client.models.generate_content(
+            model='gemini-1.5-flash-001', 
+            contents=prompt,
+            config={'response_mime_type': 'application/json'}
+        )
+        return response.text
+    except Exception as e:
+        # Fallback to Pro if Flash fails (rare, but safe)
+        st.warning("Flash model busy, switching to Pro...")
+        response = client.models.generate_content(
+            model='gemini-1.5-pro-001', 
+            contents=prompt,
+            config={'response_mime_type': 'application/json'}
+        )
+        return response.text
 
 # --- FUNCTION: READ PDF ---
 def extract_text_from_pdf(uploaded_file):
@@ -126,7 +127,7 @@ with tab1:
                     raw_json = analyze_email_with_memory(email_content, api_key)
                     data = json.loads(raw_json)
                     
-                    # 2. Log the result to CSV automatically
+                    # 2. Log the result
                     save_to_history(uploaded_file.name, current_user, data)
                     st.toast("Analysis saved to History Log! 📝")
                     
@@ -134,24 +135,24 @@ with tab1:
                     st.divider()
                     
                     # Color-coded Alert Box
-                    cat = data['category'].upper()
+                    cat = data.get('category', 'BLUE').upper()
                     if "RED" in cat:
-                        st.error(f"### 🔥 BURNING (RED)\n**Reason:** {data['reason']}")
+                        st.error(f"### 🔥 BURNING (RED)\n**Reason:** {data.get('reason')}")
                     elif "YELLOW" in cat:
-                        st.warning(f"### ⚠️ MODERATE (YELLOW)\n**Reason:** {data['reason']}")
+                        st.warning(f"### ⚠️ MODERATE (YELLOW)\n**Reason:** {data.get('reason')}")
                     else:
-                        st.info(f"### 🧊 COLD (BLUE)\n**Reason:** {data['reason']}")
+                        st.info(f"### 🧊 COLD (BLUE)\n**Reason:** {data.get('reason')}")
 
                     # Columns for layout
                     col1, col2 = st.columns([1, 2])
                     
                     with col1:
                         st.subheader("✅ Action Plan")
-                        st.write(data['action'])
+                        st.write(data.get('action'))
                         
                     with col2:
                         st.subheader("✍️ Draft Response")
-                        email_draft = f"Subject: {data['draft_subject']}\n\n{data['draft_body']}"
+                        email_draft = f"Subject: {data.get('draft_subject')}\n\n{data.get('draft_body')}"
                         st.text_area("Copy this reply:", value=email_draft, height=300)
 
                 except Exception as e:
@@ -160,19 +161,12 @@ with tab1:
 # === TAB 2: THE HISTORY LOG ===
 with tab2:
     st.header("🗂️ Analysis History")
-    st.markdown("This log tracks every file processed by the system.")
     
     if os.path.exists("history.csv"):
-        # Load the CSV
         df = pd.read_csv("history.csv")
-        
-        # Sort by latest first (reverse order)
-        df = df.iloc[::-1]
-        
-        # Show interactive table
+        df = df.iloc[::-1] # Reverse order
         st.dataframe(df, use_container_width=True)
         
-        # Download Button
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 Download Log as CSV",
