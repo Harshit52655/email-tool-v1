@@ -1,6 +1,6 @@
 import streamlit as st
 import fitz  # PyMuPDF
-from google import genai
+import google.generativeai as genai # <--- CHANGED LIBRARY
 import json
 import pandas as pd
 from datetime import datetime
@@ -9,8 +9,7 @@ import os
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Email Heatmap", page_icon="🔥", layout="wide")
 
-# --- API KEY (Incorporated) ---
-# ⚠️ SECURITY WARNING: Remove this before making the repo public!
+# --- API KEY ---
 DEFAULT_API_KEY = "AIzaSyCeevMmHPXwScyRlztI4lrqxHq2fkCokk4"
 
 # --- UI HEADER ---
@@ -19,8 +18,6 @@ st.title("📧 Email Heatmap & Actionizer")
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Settings")
-    
-    # Allow overriding the key if needed
     api_key_input = st.text_input("Gemini API Key", type="password", value=DEFAULT_API_KEY)
     api_key = api_key_input if api_key_input else DEFAULT_API_KEY
     
@@ -31,7 +28,6 @@ with st.sidebar:
 
 # --- FUNCTION: LOGGING TO CSV ---
 def save_to_history(filename, user, result_data):
-    """Saves the analysis result to a local CSV file."""
     new_record = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "User": user,
@@ -52,10 +48,15 @@ def save_to_history(filename, user, result_data):
         st.error(f"Could not save log: {e}")
         return False
 
-# --- FUNCTION: AI ANALYSIS ---
+# --- FUNCTION: AI ANALYSIS (STABLE VERSION) ---
 @st.cache_data(show_spinner=False)
 def analyze_email_with_memory(email_text, _client_key):
-    client = genai.Client(api_key=_client_key)
+    # 1. Configure the STABLE library
+    genai.configure(api_key=_client_key)
+    
+    # 2. Initialize the Model
+    # We use 'gemini-1.5-flash' which works reliably in this SDK
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
     prompt = f"""
     Act as a senior email analyst. Analyze the provided email thread.
@@ -78,25 +79,12 @@ def analyze_email_with_memory(email_text, _client_key):
     }}
     """
     
-    # --- MODEL FIX ---
-    # We use 'gemini-1.5-flash-001' which is the PINNED STABLE version.
-    # This resolves the 404 error caused by alias mismatch.
-    try:
-        response = client.models.generate_content(
-            model='gemini-1.5-flash-001', 
-            contents=prompt,
-            config={'response_mime_type': 'application/json'}
-        )
-        return response.text
-    except Exception as e:
-        # Fallback to Pro if Flash fails (rare, but safe)
-        st.warning("Flash model busy, switching to Pro...")
-        response = client.models.generate_content(
-            model='gemini-1.5-pro-001', 
-            contents=prompt,
-            config={'response_mime_type': 'application/json'}
-        )
-        return response.text
+    # 3. Generate Content
+    response = model.generate_content(
+        prompt,
+        generation_config={"response_mime_type": "application/json"}
+    )
+    return response.text
 
 # --- FUNCTION: READ PDF ---
 def extract_text_from_pdf(uploaded_file):
